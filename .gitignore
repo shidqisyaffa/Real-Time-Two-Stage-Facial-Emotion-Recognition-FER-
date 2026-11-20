@@ -1,0 +1,28 @@
+# Virtual Environment (do not push venv)
+projek1/
+venv/
+.venv/
+env/
+
+# Python cache & compiled files
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyd
+
+# Dataset cache files (YOLO dataset caches)
+*.cache
+
+# IDE & Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Operating System files
+Thumbs.db
+.DS_Store
+
+# Logs
+*.log
+

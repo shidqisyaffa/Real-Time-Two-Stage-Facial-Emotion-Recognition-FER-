@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="id" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Deteksi Emosi Wajah</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-zinc-950 text-zinc-100 min-h-screen flex flex-col antialiased">
+
+  <!-- Header Sederhana -->
+  <header class="border-b border-zinc-800 bg-zinc-900/60 px-6 py-4">
+    <div class="max-w-6xl mx-auto flex items-center justify-between">
+      <h1 class="text-lg font-semibold tracking-wide text-zinc-100">Deteksi Emosi Wajah</h1>
+      <div class="flex items-center space-x-2 text-xs text-emerald-400 bg-zinc-900 border border-zinc-800 px-3 py-1 rounded-md">
+        <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+        <span id="cam-status">Kamera Aktif</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- Konten Utama -->
+  <main class="flex-1 max-w-6xl mx-auto px-6 py-6 w-full">
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
+      
+      <!-- Video Feed & Overlay Box (2 Kolom) -->
+      <div class="lg:col-span-2">
+        <div class="bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden aspect-video relative flex items-center justify-center shadow-lg">
+          
+          <!-- Elemen Video Kamera Browser -->
+          <video 
+            id="webcam" 
+            autoplay 
+            playsinline 
+            muted 
+            class="w-full h-full object-cover"
+          ></video>
+
+          <!-- Canvas Overlay Bounding Box & Label -->
+          <canvas 
+            id="overlay-canvas" 
+            class="absolute inset-0 w-full h-full pointer-events-none"
+          ></canvas>
+
+          <!-- Pesan Izin / Placeholder Jika Kamera Belum Dibuka -->
+          <div id="cam-placeholder" class="absolute inset-0 bg-zinc-950/90 flex flex-col items-center justify-center p-6 text-center z-10 hidden">
+            <p class="text-sm font-medium text-zinc-300">Kamera laptop belum aktif atau izin belum diberikan.</p>
+            <button 
+              id="btn-start-cam" 
+              class="mt-3 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold rounded-lg transition"
+            >
+              Aktifkan Kamera Laptop
+            </button>
+          </div>
+
+        </div>
+      </div>
+
+      <!-- Panel Status (1 Kolom) -->
+      <div class="space-y-4">
+        
+        <!-- Kartu Emosi -->
+        <div class="bg-zinc-900 border border-zinc-800 rounded-xl p-5 shadow-sm">
+          <p class="text-xs text-zinc-400 font-medium">Emosi Saat Ini</p>
+          <div class="mt-2 flex items-baseline justify-between">
+            <h2 id="val-emotion" class="text-2xl font-bold text-white capitalize">-</h2>
+            <span id="val-conf" class="text-sm font-mono text-emerald-400">0%</span>
+          </div>
+          <!-- Bar Akurasi -->
+          <div class="w-full bg-zinc-800 rounded-full h-2 mt-4 overflow-hidden">
+            <div id="bar-conf" class="bg-emerald-500 h-full rounded-full transition-all duration-200" style="width: 0%"></div>
+          </div>
+        </div>
+
+        <!-- Kartu Informasi Sistem -->
+        <div class="bg-zinc-900 border border-zinc-800 rounded-xl p-5 shadow-sm space-y-3 text-sm">
+          <p class="text-xs text-zinc-400 font-medium">Informasi Sistem</p>
+          
+          <div class="flex justify-between items-center py-1 border-b border-zinc-800/60">
+            <span class="text-zinc-400 text-xs">Kecepatan GPU</span>
+            <span id="val-fps" class="font-mono text-xs text-zinc-200 font-semibold">0.0 FPS</span>
+          </div>
+
+          <div class="flex justify-between items-center py-1 border-b border-zinc-800/60">
+            <span class="text-zinc-400 text-xs">Wajah Terdeteksi</span>
+            <span id="val-faces" class="text-xs text-zinc-200 font-semibold">0</span>
+          </div>
+
+          <div class="flex justify-between items-center py-1 border-b border-zinc-800/60">
+            <span class="text-zinc-400 text-xs">Perangkat</span>
+            <span id="val-device" class="text-xs text-zinc-200 font-semibold">RTX 3060 (CUDA)</span>
+          </div>
+
+          <div class="flex justify-between items-center py-1">
+            <span class="text-zinc-400 text-xs">VRAM Teralokasi</span>
+            <span id="val-vram" class="font-mono text-xs text-zinc-200">0.0 GB</span>
+          </div>
+        </div>
+
+      </div>
+
+    </div>
+  </main>
+
+  <script>
+    const video = document.getElementById('webcam');
+    const overlay = document.getElementById('overlay-canvas');
+    const ctx = overlay.getContext('2d');
+    const placeholder = document.getElementById('cam-placeholder');
+    const btnStart = document.getElementById('btn-start-cam');
+
+    const valEmotion = document.getElementById('val-emotion');
+    const valConf = document.getElementById('val-conf');
+    const barConf = document.getElementById('bar-conf');
+    const valFps = document.getElementById('val-fps');
+    const valFaces = document.getElementById('val-faces');
+    const valDevice = document.getElementById('val-device');
+    const valVram = document.getElementById('val-vram');
+    const camStatus = document.getElementById('cam-status');
+
+    // Canvas tersembunyi untuk mengambil snapshot frame
+    const captureCanvas = document.createElement('canvas');
+    const captureCtx = captureCanvas.getContext('2d');
+
+    let isProcessing = false;
+    let streamActive = false;
+
+    // Membuka kamera laptop langsung via browser
+    async function startCamera() {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: 'user' },
+          audio: false
+        });
+        video.srcObject = stream;
+        await video.play();
+
+        placeholder.classList.add('hidden');
+        camStatus.textContent = 'Kamera Aktif';
+        camStatus.className = 'text-emerald-400';
+        streamActive = true;
+
+        // Sesuaikan ukuran overlay canvas dengan video
+        video.addEventListener('loadedmetadata', resizeCanvas);
+        window.addEventListener('resize', resizeCanvas);
+        resizeCanvas();
+
+        // Mulai loop inferensi
+        requestAnimationFrame(inferenceLoop);
+
+      } catch (err) {
+        console.error('Kamera gagal dibuka:', err);
+        placeholder.classList.remove('hidden');
+        camStatus.textContent = 'Izin Kamera Diperlukan';
+        camStatus.className = 'text-amber-400';
+      }
+    }
+
+    function resizeCanvas() {
+      overlay.width = video.videoWidth || 640;
+      overlay.height = video.videoHeight || 480;
+      captureCanvas.width = video.videoWidth || 640;
+      captureCanvas.height = video.videoHeight || 480;
+    }
+
+    btnStart.addEventListener('click', startCamera);
+
+    // Loop Pengiriman Frame ke Server GPU Flask
+    async function inferenceLoop() {
+      if (!streamActive) return;
+
+      if (!isProcessing && video.readyState === video.HAVE_ENOUGH_DATA) {
+        isProcessing = true;
+
+        captureCtx.drawImage(video, 0, 0, captureCanvas.width, captureCanvas.height);
+        
+        captureCanvas.toBlob(async (blob) => {
+          if (!blob) {
+            isProcessing = false;
+            setTimeout(inferenceLoop, 100);
+            return;
+          }
+
+          const formData = new FormData();
+          formData.append('frame', blob, 'frame.jpg');
+
+          try {
+            const res = await fetch('/api/predict_frame', { method: 'POST', body: formData });
+            if (res.ok) {
+              const data = await res.json();
+              renderResults(data);
+            }
+          } catch (e) {
+            console.warn('Gagal menghubungi /api/predict_frame:', e);
+          } finally {
+            isProcessing = false;
+            // Kirim frame berikutnya dengan delay ~80ms (mencapai ~12-15 FPS inferensi GPU stabil)
+            setTimeout(inferenceLoop, 80);
+          }
+        }, 'image/jpeg', 0.8);
+
+      } else {
+        setTimeout(inferenceLoop, 100);
+      }
+    }
+
+    // Gambar Bounding Box dan Update Info
+    function renderResults(data) {
+      ctx.clearRect(0, 0, overlay.width, overlay.height);
+
+      // Gambar setiap box wajah tepat (x, y, w, h)
+      if (data.faces && data.faces.length > 0) {
+        data.faces.forEach(face => {
+          const [x, y, w, h] = face.box;
+          const color = face.color || '#22c55e';
+
+          // Box tepat pada koordinat wajah
+          ctx.strokeStyle = color;
+          ctx.lineWidth = 2.5;
+          ctx.strokeRect(x, y, w, h);
+
+          // Label tepat di atas kepala
+          const label = `${face.emotion} (${face.confidence}%)`;
+          ctx.font = 'bold 13px sans-serif';
+          const textW = ctx.measureText(label).width;
+          const labelY = Math.max(20, y - 10);
+
+          ctx.fillStyle = 'rgba(24, 24, 27, 0.85)';
+          ctx.fillRect(x, labelY - 16, textW + 8, 20);
+
+          ctx.fillStyle = color;
+          ctx.fillText(label, x + 4, labelY - 2);
+        });
+      }
+
+      // Update Panel Kanan
+      valEmotion.textContent = data.dominant_emotion || 'Tidak Ada Wajah';
+      const conf = (data.confidence || 0).toFixed(1);
+      valConf.textContent = conf + '%';
+      barConf.style.width = Math.min(conf, 100) + '%';
+
+      valFps.textContent = (data.fps || 0).toFixed(1) + ' FPS';
+      valFaces.textContent = data.faces_count || 0;
+      if (data.gpu_name) valDevice.textContent = data.gpu_name;
+      if (data.vram_used) valVram.textContent = data.vram_used;
+    }
+
+    // Buka otomatis saat halaman dimuat
+    window.addEventListener('DOMContentLoaded', startCamera);
+  </script>
+</body>
+</html>
